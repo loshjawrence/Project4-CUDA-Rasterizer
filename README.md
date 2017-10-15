@@ -26,13 +26,14 @@ https://mynameismjp.wordpress.com/2012/10/24/msaa-overview/
 <br />
     There was not much savings between software SSAA and MSAA, both needed additional depth buffer slots for the subsamles, additional fragment slots for the subsamples and blending of teh subsamples.
 <br />
+<br />
 
 
-**Software implementation of GPU pipeline renders**<br />
+**Software implementation of GPU pipeline: Renders**<br />
 **Duck Diffuse**<br />
 ![](renders/duck.png)
 
-**Duck Blinn-Phong**<br />
+**Duck Blinn-Phong, gamma correction**<br />
 ![](renders/duckblinnphong.png)
 
 **Duck MSAA comparison**<br />
@@ -41,7 +42,7 @@ https://mynameismjp.wordpress.com/2012/10/24/msaa-overview/
 **Checker no tex filtering**<br />
 ![](renders/checker.png)
 
-**Checker bilinear tex filtering, with blinn-phong**<br />
+**Checker bilinear tex filtering, with blinn-phong, gamma correction**<br />
 ![](renders/checkerbilin.png)
 
 **Cesium Milk Truck**<br />
@@ -51,16 +52,16 @@ https://mynameismjp.wordpress.com/2012/10/24/msaa-overview/
 
 
 **Data**<br />
-![](img/data.png)
+![](renders/data.png)
 
 **Time per feature breakdown**<br />
-![](img/breakdown.png)
+![](renders/breakdown.png)
 
 **MSAA** />
-![](img/msaa.png)
+![](renders/msaa.png)
 
 **SSAA**<br />
-![](img/ssaa.png)
+![](renders/ssaa.png)
 
 
 **GPU Device Properties**<br />
