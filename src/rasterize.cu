@@ -18,6 +18,9 @@
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+const int SSAA = 1;
+const int MSAA = 1;
+
 namespace {
 
 	typedef unsigned short VertexIndex;
@@ -43,10 +46,10 @@ namespace {
 
 		 glm::vec3 eyePos;	// eye space position used for shading
 		 glm::vec3 eyeNor;	// eye space normal used for shading, cuz normal will go wrong after perspective transformation
-		// glm::vec3 col;
+		 glm::vec3 col;
 		 glm::vec2 texcoord0;
 		 TextureData* dev_diffuseTex = NULL;
-		// int texWidth, texHeight;
+		 int texWidth, texHeight;
 		// ...
 	};
 
@@ -62,10 +65,11 @@ namespace {
 		// The attributes listed below might be useful, 
 		// but always feel free to modify on your own
 
-		// glm::vec3 eyePos;	// eye space position used for shading
-		// glm::vec3 eyeNor;
-		// VertexAttributeTexcoord texcoord0;
-		// TextureData* dev_diffuseTex;
+		 glm::vec3 eyePos;	// eye space position used for shading
+		 glm::vec3 eyeNor;
+		 VertexAttributeTexcoord texcoord0;
+		 TextureData* dev_diffuseTex;
+		 int texWidth, texHeight;
 		// ...
 	};
 
@@ -108,6 +112,7 @@ static int totalNumPrimitives = 0;
 static Primitive *dev_primitives = NULL;
 static Fragment *dev_fragmentBuffer = NULL;
 static glm::vec3 *dev_framebuffer = NULL;
+static int* dev_mutices = NULL;
 
 static int * dev_depth = NULL;	// you might need this buffer when doing depth test
 
@@ -137,17 +142,113 @@ void sendImageToPBO(uchar4 *pbo, int w, int h, glm::vec3 *image) {
 * Writes fragment colors to the framebuffer
 */
 __global__
-void render(int w, int h, Fragment *fragmentBuffer, glm::vec3 *framebuffer) {
+void render(const int w, const int h, 
+	const Fragment* const fragmentBuffer, glm::vec3* const framebuffer) 
+{
     int x = (blockIdx.x * blockDim.x) + threadIdx.x;
     int y = (blockIdx.y * blockDim.y) + threadIdx.y;
     int index = x + (y * w);
 
-    if (x < w && y < h) {
-        framebuffer[index] = fragmentBuffer[index].color;
+	if (x >= w && y >= h) { return; }
+	//framebuffer[index] = fragmentBuffer[index].color;
+	// TODO: add your fragment shader code here
+	glm::vec3 col;
+	if (fragmentBuffer[index].dev_diffuseTex != NULL) {
+		//compute color from texture
+		const int width = fragmentBuffer[index].texWidth;
+		const int height = fragmentBuffer[index].texHeight;
+		const float texX_float = fragmentBuffer[index].texcoord0.x * width;
+		const float texY_float = fragmentBuffer[index].texcoord0.y * height;
+		const int texX_low = texX_float;
+		const int texX_high = texX_low == width - 1 ? texX_low : texX_low + 1;
+		const int texY_low = texY_float;
+		const int texY_high = texY_low == width - 1 ? texY_low : texY_low + 1;
+		const float uX = texX_float - texX_low;
+		const float uY = texY_float - texY_low;
+		const int rgbindex_Redlowleft	= 3 * (texY_low* width + texX_low);
+		const int rgbindex_Redlowright	= 3 * (texY_low* width + texX_high);
+		const int rgbindex_Redhighleft	= 3 * (texY_high*width + texX_low);
+		const int rgbindex_Redhighright	= 3 * (texY_high*width + texX_high);
+		const float toFloat = 1.f / 255.f;
+		
+		//bilinear interp of the four texels
+		const glm::vec3 col_lowleft(fragmentBuffer[index].dev_diffuseTex[rgbindex_Redlowleft + 0] * toFloat,
+									fragmentBuffer[index].dev_diffuseTex[rgbindex_Redlowleft + 1] * toFloat,
+									fragmentBuffer[index].dev_diffuseTex[rgbindex_Redlowleft + 2] * toFloat);
 
-		// TODO: add your fragment shader code here
+		const glm::vec3 col_lowright(fragmentBuffer[index].dev_diffuseTex[rgbindex_Redlowright + 0] * toFloat,
+									 fragmentBuffer[index].dev_diffuseTex[rgbindex_Redlowright + 1] * toFloat,
+									 fragmentBuffer[index].dev_diffuseTex[rgbindex_Redlowright + 2] * toFloat);
 
-    }
+		const glm::vec3 col_highleft(fragmentBuffer[index].dev_diffuseTex[rgbindex_Redhighleft + 0] * toFloat,
+									 fragmentBuffer[index].dev_diffuseTex[rgbindex_Redhighleft + 1] * toFloat,
+									 fragmentBuffer[index].dev_diffuseTex[rgbindex_Redhighleft + 2] * toFloat);
+
+		const glm::vec3 col_highright(fragmentBuffer[index].dev_diffuseTex[rgbindex_Redhighright + 0] * toFloat,
+									  fragmentBuffer[index].dev_diffuseTex[rgbindex_Redhighright + 1] * toFloat,
+									  fragmentBuffer[index].dev_diffuseTex[rgbindex_Redhighright + 2] * toFloat);
+
+		const glm::vec3 lowXinterp  = col_lowright*uX + col_lowleft*(1.f - uX);
+		const glm::vec3 highXinterp = col_highright*uX + col_highleft*(1.f - uX);
+		const glm::vec3 finalinterp  = highXinterp*uY + lowXinterp*(1.f - uY);
+
+		col = finalinterp;
+		//col = glm::vec3(fragmentBuffer[index].dev_diffuseTex[rgbindex_Redlowleft + 0] * toFloat,
+		//				fragmentBuffer[index].dev_diffuseTex[rgbindex_Redlowleft + 1] * toFloat,
+		//				fragmentBuffer[index].dev_diffuseTex[rgbindex_Redlowleft + 2] * toFloat);
+
+	} else {
+		col = fragmentBuffer[index].color;
+	}
+
+	const int mode = 1;
+
+	//diffuse shading
+	if (0 == mode) {
+		const glm::vec3 lightDir = glm::normalize(glm::vec3(1, 1, 1));
+		framebuffer[index] = glm::dot(lightDir, fragmentBuffer[index].eyeNor) * col;
+
+
+		//blinn-phong shading model from wikipedia
+	} else {
+		const glm::vec3 lightPos(10.0, 10.0, 10.0);
+		const glm::vec3 ambientColor(0.0, 0.0, 0.0);
+		//const glm::vec3 diffuseColor(0.5, 0.0, 0.0);
+		const glm::vec3 diffuseColor(col);
+		const glm::vec3 specColor(1.0, 1.0, 1.0);
+		const float shininess = 16.0;
+		const float screenGamma = 2.2; // Assume the monitor is calibrated to the sRGB color space
+
+		const glm::vec3 normal = fragmentBuffer[index].eyeNor;
+		const glm::vec3 fragPos = fragmentBuffer[index].eyePos;
+		const glm::vec3 lightDir = normalize(lightPos - fragPos);
+
+		const float lambertian = glm::max(glm::dot(lightDir, normal), 0.f);
+		float specular = 0.0;
+
+		if (lambertian > 0.0) {
+			glm::vec3 viewDir = glm::normalize(-fragPos);
+
+			// this is blinn phong
+			const glm::vec3 halfDir = glm::normalize(lightDir + viewDir);
+			float specAngle = glm::max(glm::dot(halfDir, normal), 0.f);
+			specular = glm::pow(specAngle, shininess);
+
+			// this is phong (for comparison)
+			if (mode == 2) {
+				glm::vec3 reflectDir = glm::reflect(-lightDir, normal);
+				specAngle = glm::max(glm::dot(reflectDir, viewDir), 0.f);//same as HalfDotNor
+				// note that the exponent is different here
+				specular = glm::pow(specAngle, shininess / 4.f);
+			}
+		}
+		const glm::vec3 colorLinear = ambientColor + lambertian * diffuseColor + specular * specColor;
+		// apply gamma correction (assume ambientColor, diffuseColor and specColor
+		// have been linearized, i.e. have no gamma correction in them)
+		const glm::vec3 colorGammaCorrected = glm::pow(colorLinear, glm::vec3(1.f / screenGamma));
+		// use the gamma corrected color in the fragment
+		framebuffer[index] = colorGammaCorrected;
+	}
 }
 
 /**
@@ -165,6 +266,10 @@ void rasterizeInit(int w, int h) {
     
 	cudaFree(dev_depth);
 	cudaMalloc(&dev_depth, width * height * sizeof(int));
+
+    cudaFree(dev_mutices);
+    cudaMalloc(&dev_mutices,   width * height * sizeof(int));
+    cudaMemset(dev_mutices, 0, width * height * sizeof(int));
 
 	checkCUDAError("rasterizeInit");
 }
@@ -625,10 +730,10 @@ void rasterizeSetBuffers(const tinygltf::Scene & scene) {
 
 __global__ 
 void _vertexTransformAndAssembly(
-	int numVertices, 
+	const int numVertices, 
 	PrimitiveDevBufPointers primitive, 
-	glm::mat4 MVP, glm::mat4 MV, glm::mat3 MV_normal, 
-	int width, int height) {
+	const glm::mat4 MVP, const glm::mat4 MV, const glm::mat3 MV_normal, 
+	const int width, const int height) {
 
 	// vertex id
 	int vid = (blockIdx.x * blockDim.x) + threadIdx.x;
@@ -638,10 +743,30 @@ void _vertexTransformAndAssembly(
 		// Multiply the MVP matrix for each vertex position, this will transform everything into clipping space
 		// Then divide the pos by its w element to transform into NDC space
 		// Finally transform x and y to viewport space
+		glm::vec4 viewportPos = MVP * glm::vec4(primitive.dev_position[vid], 1.f);
+		viewportPos *= (1.f / viewportPos.w);
+		//viewportPos.x = 0.5f * width  * (1.f + viewportPos.x);
+		//viewportPos.y = 0.5f * height * (1.f - viewportPos.y);
+		viewportPos.x = 0.5f * width  * (1.f - viewportPos.x);//i guess upper right is 0,0 for this code
+		viewportPos.y = 0.5f * height * (1.f - viewportPos.y);
+		//ndc lowleft is -1,-1 and upright is 1,1. 
+		//ndc x coords line up with how pixel coords are laid out( increase from left to right)
+		//but ndc y coords are reversed, they increase from bottom to top but pixels coords increase from top to bottom, 
+		//thats why we need to essential flip the ndc y coords by multiplying by -1
+		//this puts ndc y vals of 1 at pixel y vals of 0(top of screen) and ndc y vals of -1 at pixel vals of height(bottom of screen)
 
 		// TODO: Apply vertex assembly here
 		// Assemble all attribute arraies into the primitive array
-		
+		if (0 != primitive.diffuseTexHeight && 0 != primitive.diffuseTexWidth && primitive.dev_diffuseTex != NULL) {
+			primitive.dev_verticesOut[vid].texcoord0      = primitive.dev_texcoord0[vid];
+			primitive.dev_verticesOut[vid].dev_diffuseTex = primitive.dev_diffuseTex;
+			primitive.dev_verticesOut[vid].texWidth		  = primitive.diffuseTexWidth;
+			primitive.dev_verticesOut[vid].texHeight	  = primitive.diffuseTexHeight;
+		}
+		primitive.dev_verticesOut[vid].eyeNor = glm::normalize(MV_normal * primitive.dev_normal[vid]);//cam space
+		primitive.dev_verticesOut[vid].eyePos = glm::vec3(MV * glm::vec4(primitive.dev_position[vid], 1.f));//cam space
+		primitive.dev_verticesOut[vid].pos = viewportPos;//pixel space 
+		primitive.dev_verticesOut[vid].col = glm::vec3(1, 0, 0);
 	}
 }
 
@@ -650,29 +775,95 @@ void _vertexTransformAndAssembly(
 static int curPrimitiveBeginId = 0;
 
 __global__ 
-void _primitiveAssembly(int numIndices, int curPrimitiveBeginId, Primitive* dev_primitives, PrimitiveDevBufPointers primitive) {
-
+void _primitiveAssembly(const int numIndices, 
+	const int curPrimitiveBeginId, Primitive* const dev_primitives, 
+	const PrimitiveDevBufPointers primitive) 
+{
 	// index id
 	int iid = (blockIdx.x * blockDim.x) + threadIdx.x;
-
 	if (iid < numIndices) {
-
 		// TODO: uncomment the following code for a start
 		// This is primitive assembly for triangles
-
-		//int pid;	// id for cur primitives vector
-		//if (primitive.primitiveMode == TINYGLTF_MODE_TRIANGLES) {
-		//	pid = iid / (int)primitive.primitiveType;
-		//	dev_primitives[pid + curPrimitiveBeginId].v[iid % (int)primitive.primitiveType]
-		//		= primitive.dev_verticesOut[primitive.dev_indices[iid]];
-		//}
-
-
+		if (primitive.primitiveMode == TINYGLTF_MODE_TRIANGLES) {
+			const int pid = iid / (int)primitive.primitiveType;// id for cur primitives vector
+			const int componentID = pid*(int)primitive.primitiveType - iid;//modulo is expensive
+			dev_primitives[pid + curPrimitiveBeginId].v[iid % (int)primitive.primitiveType]
+				= primitive.dev_verticesOut[primitive.dev_indices[iid]];
+		}
 		// TODO: other primitive types (point, line)
 	}
 	
 }
 
+__global__
+void _baryRasterize(const Primitive* const primitives,
+	const int numPrimitives, Fragment* const fragmentbuffer, int* const depth, int* const mutices, const int width, const int height)
+{
+	const int primID = blockIdx.x*blockDim.x + threadIdx.x;
+	if (primID >= numPrimitives) { return; }
+
+	const glm::vec3 screentri[3] = { glm::vec3(primitives[primID].v[0].pos),
+									 glm::vec3(primitives[primID].v[1].pos),
+									 glm::vec3(primitives[primID].v[2].pos) };
+
+	const glm::vec3 eyetri[3] =    { glm::vec3(primitives[primID].v[0].eyePos),
+									 glm::vec3(primitives[primID].v[1].eyePos),
+									 glm::vec3(primitives[primID].v[2].eyePos) };
+	const glm::vec3 primNor = glm::cross(screentri[1] - screentri[0], screentri[2] - screentri[0]);
+	if (primNor.z < 0) { return; }
+
+	const AABB bounds = getAABBForTriangle(screentri, width, height);
+	for (int x = bounds.min.x; x < bounds.max.x; ++x) {
+		for (int y = bounds.min.y; y < bounds.max.y; ++y) {
+			const glm::vec3 barycoord = calculateBarycentricCoordinate(screentri, glm::vec2(x, y));
+			if (!isBarycentricCoordInBounds(barycoord)) { continue; }
+			//precompute all this before we hit the bottle neck of the atomicCAS
+			//once we have the mutex we need to release it as soon as possible so other fragments can test their depths
+			const float perspcorrectz = getPerspectiveCorrectZAtBaryCoord(barycoord, eyetri);
+			if (perspcorrectz >= 0) { continue; }
+			const float perspBary0 = (perspcorrectz / eyetri[0].z) * barycoord[0];
+			const float perspBary1 = (perspcorrectz / eyetri[1].z) * barycoord[1];
+			const float perspBary2 = (perspcorrectz / eyetri[2].z) * barycoord[2];
+
+			const glm::vec3 fragEyeNor =    perspBary0 * primitives[primID].v[0].eyeNor +
+										    perspBary1 * primitives[primID].v[1].eyeNor +
+										    perspBary2 * primitives[primID].v[2].eyeNor;
+
+			const glm::vec3 fragEyePos =    perspBary0 * primitives[primID].v[0].eyePos +
+										    perspBary1 * primitives[primID].v[1].eyePos +
+										    perspBary2 * primitives[primID].v[2].eyePos;
+
+			const glm::vec2 fragTexCoord0 = perspBary0 * primitives[primID].v[0].texcoord0 +
+											perspBary1 * primitives[primID].v[1].texcoord0 +
+											perspBary2 * primitives[primID].v[2].texcoord0;
+
+			const glm::vec3 fragCol =	    perspBary0 * primitives[primID].v[0].col +
+										    perspBary1 * primitives[primID].v[1].col +
+										    perspBary2 * primitives[primID].v[2].col;
+
+			//https://stackoverflow.com/questions/21341495/cuda-mutex-and-atomiccas
+			const int pixelidx = x + y*width;
+			int* mutex = &mutices[pixelidx];
+			bool isSet = false;
+			const float depthBufScale = -100000.f;//helps with sorting, depth buffer holds int values, push tiny values up to large ints
+			do {
+				if (isSet = atomicCAS(mutex, 0, 1) == 0) {
+					if (depth[pixelidx] > depthBufScale*perspcorrectz) {
+						depth[pixelidx] = depthBufScale*perspcorrectz;
+						fragmentbuffer[pixelidx].color = fragCol;
+						fragmentbuffer[pixelidx].eyePos = fragEyePos;
+						fragmentbuffer[pixelidx].eyeNor = fragEyeNor;
+						fragmentbuffer[pixelidx].texcoord0 = fragTexCoord0;
+						fragmentbuffer[pixelidx].dev_diffuseTex = primitives[primID].v[0].dev_diffuseTex;
+						fragmentbuffer[pixelidx].texWidth = primitives[primID].v[0].texWidth;
+						fragmentbuffer[pixelidx].texHeight = primitives[primID].v[0].texHeight;
+					}
+				}
+				if (isSet) { *mutex = 0; }
+			} while (!isSet);
+		}//x
+	}//y
+}
 
 
 /**
@@ -721,13 +912,16 @@ void rasterize(uchar4 *pbo, const glm::mat4 & MVP, const glm::mat4 & MV, const g
 	
 	cudaMemset(dev_fragmentBuffer, 0, width * height * sizeof(Fragment));
 	initDepth << <blockCount2d, blockSize2d >> >(width, height, dev_depth);
+	checkCUDAError("initDepth");
 	
 	// TODO: rasterize
-
-
+	const int numThreadsPerBlock = 128;
+	const int numBlocksForPrimitives = (totalNumPrimitives + numThreadsPerBlock - 1) / numThreadsPerBlock;
+	_baryRasterize<<<numBlocksForPrimitives, numThreadsPerBlock>>>(dev_primitives, totalNumPrimitives, dev_fragmentBuffer, dev_depth, dev_mutices, width, height);
+	checkCUDAError("_baryRasterize");
 
     // Copy depthbuffer colors into framebuffer
-	render << <blockCount2d, blockSize2d >> >(width, height, dev_fragmentBuffer, dev_framebuffer);
+	render<<<blockCount2d, blockSize2d>>>(width, height, dev_fragmentBuffer, dev_framebuffer);
 	checkCUDAError("fragment shader");
     // Copy framebuffer into OpenGL buffer for OpenGL previewing
     sendImageToPBO<<<blockCount2d, blockSize2d>>>(pbo, width, height, dev_framebuffer);
@@ -771,6 +965,9 @@ void rasterizeFree() {
 
 	cudaFree(dev_depth);
 	dev_depth = NULL;
+
+	cudaFree(dev_mutices);
+	dev_mutices = NULL;
 
     checkCUDAError("rasterize Free");
 }
