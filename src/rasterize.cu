@@ -18,8 +18,20 @@
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
-const int SSAA = 1;
-const int MSAA = 1;
+//static const int SSAA = 4;//4 or 16, subsample patter is grid so can only really do numbers with integer sqrt's, i.e. form a grid
+//static const int MSAA = 1;//4 or 16
+#define SSAA 1;//4 or 16, subsample patter is grid so can only really do numbers with integer sqrt's, i.e. form a grid
+#define MSAA 1;//4 or 16
+
+#if 1 < SSAA 
+const int AASCALING = SSAA;
+#elif 1 < MSAA
+const int AASCALING = MSAA;
+#else
+const int AASCALING = 1;
+#endif
+
+static const int sqrtAASCALING = glm::sqrt(AASCALING);
 
 namespace {
 
@@ -142,113 +154,133 @@ void sendImageToPBO(uchar4 *pbo, int w, int h, glm::vec3 *image) {
 * Writes fragment colors to the framebuffer
 */
 __global__
-void render(const int w, const int h, 
+void render(const int wimage, const int himage, const int sqrtAASCALING, 
 	const Fragment* const fragmentBuffer, glm::vec3* const framebuffer) 
 {
-    int x = (blockIdx.x * blockDim.x) + threadIdx.x;
-    int y = (blockIdx.y * blockDim.y) + threadIdx.y;
-    int index = x + (y * w);
+    const int x = (blockIdx.x * blockDim.x) + threadIdx.x;
+    const int y = (blockIdx.y * blockDim.y) + threadIdx.y;
 
-	if (x >= w && y >= h) { return; }
+	if (x >= wimage && y >= himage) { return; }
 	//framebuffer[index] = fragmentBuffer[index].color;
 	// TODO: add your fragment shader code here
-	glm::vec3 col;
-	if (fragmentBuffer[index].dev_diffuseTex != NULL) {
-		//compute color from texture
-		const int width = fragmentBuffer[index].texWidth;
-		const int height = fragmentBuffer[index].texHeight;
-		const float texX_float = fragmentBuffer[index].texcoord0.x * width;
-		const float texY_float = fragmentBuffer[index].texcoord0.y * height;
-		const int texX_low = texX_float;
-		const int texX_high = texX_low == width - 1 ? texX_low : texX_low + 1;
-		const int texY_low = texY_float;
-		const int texY_high = texY_low == width - 1 ? texY_low : texY_low + 1;
-		const float uX = texX_float - texX_low;
-		const float uY = texY_float - texY_low;
-		const int rgbindex_Redlowleft	= 3 * (texY_low* width + texX_low);
-		const int rgbindex_Redlowright	= 3 * (texY_low* width + texX_high);
-		const int rgbindex_Redhighleft	= 3 * (texY_high*width + texX_low);
-		const int rgbindex_Redhighright	= 3 * (texY_high*width + texX_high);
-		const float toFloat = 1.f / 255.f;
-		
-		//bilinear interp of the four texels
-		const glm::vec3 col_lowleft(fragmentBuffer[index].dev_diffuseTex[rgbindex_Redlowleft + 0] * toFloat,
-									fragmentBuffer[index].dev_diffuseTex[rgbindex_Redlowleft + 1] * toFloat,
-									fragmentBuffer[index].dev_diffuseTex[rgbindex_Redlowleft + 2] * toFloat);
 
-		const glm::vec3 col_lowright(fragmentBuffer[index].dev_diffuseTex[rgbindex_Redlowright + 0] * toFloat,
-									 fragmentBuffer[index].dev_diffuseTex[rgbindex_Redlowright + 1] * toFloat,
-									 fragmentBuffer[index].dev_diffuseTex[rgbindex_Redlowright + 2] * toFloat);
+	//LOOP over AA samples
+	const int wAA = wimage * sqrtAASCALING;
+	const int hAA = himage * sqrtAASCALING;
+	const int xAAstart = x*sqrtAASCALING;
+	const int yAAstart = y*sqrtAASCALING;
+	const int yAAend = glm::min(hAA, yAAstart + sqrtAASCALING);
+	const int xAAend = glm::min(wAA, xAAstart + sqrtAASCALING);
+	const int total = (xAAstart - xAAend) * (yAAstart-yAAend);
 
-		const glm::vec3 col_highleft(fragmentBuffer[index].dev_diffuseTex[rgbindex_Redhighleft + 0] * toFloat,
-									 fragmentBuffer[index].dev_diffuseTex[rgbindex_Redhighleft + 1] * toFloat,
-									 fragmentBuffer[index].dev_diffuseTex[rgbindex_Redhighleft + 2] * toFloat);
+    const int index = x + (y * wimage);
+	glm::vec3 col(0);
+	glm::vec3 finalcolor(0);
+	for (int yAA = yAAstart; yAA < yAAend; ++yAA) {
+		for (int xAA = xAAstart; xAA < xAAend; ++xAA) {
+			const int index = xAA + yAA*wAA;
+			if (fragmentBuffer[index].dev_diffuseTex != NULL) {
+				//compute color from texture
+				const int width = fragmentBuffer[index].texWidth;
+				const int height = fragmentBuffer[index].texHeight;
+				const float texX_float = fragmentBuffer[index].texcoord0.x * width;
+				const float texY_float = fragmentBuffer[index].texcoord0.y * height;
+				const int texX_low = texX_float;
+				const int texX_high = texX_low == width - 1 ? texX_low : texX_low + 1;
+				const int texY_low = texY_float;
+				const int texY_high = texY_low == width - 1 ? texY_low : texY_low + 1;
+				const float uX = texX_float - texX_low;
+				const float uY = texY_float - texY_low;
+				const int rgbindex_Redlowleft = 3 * (texY_low* width + texX_low);
+				const int rgbindex_Redlowright = 3 * (texY_low* width + texX_high);
+				const int rgbindex_Redhighleft = 3 * (texY_high*width + texX_low);
+				const int rgbindex_Redhighright = 3 * (texY_high*width + texX_high);
+				const float toFloat = 1.f / 255.f;
 
-		const glm::vec3 col_highright(fragmentBuffer[index].dev_diffuseTex[rgbindex_Redhighright + 0] * toFloat,
-									  fragmentBuffer[index].dev_diffuseTex[rgbindex_Redhighright + 1] * toFloat,
-									  fragmentBuffer[index].dev_diffuseTex[rgbindex_Redhighright + 2] * toFloat);
+				//bilinear interp of the four texels
+				const glm::vec3 col_lowleft(fragmentBuffer[index].dev_diffuseTex[rgbindex_Redlowleft + 0] * toFloat,
+					fragmentBuffer[index].dev_diffuseTex[rgbindex_Redlowleft + 1] * toFloat,
+					fragmentBuffer[index].dev_diffuseTex[rgbindex_Redlowleft + 2] * toFloat);
 
-		const glm::vec3 lowXinterp  = col_lowright*uX + col_lowleft*(1.f - uX);
-		const glm::vec3 highXinterp = col_highright*uX + col_highleft*(1.f - uX);
-		const glm::vec3 finalinterp  = highXinterp*uY + lowXinterp*(1.f - uY);
+				const glm::vec3 col_lowright(fragmentBuffer[index].dev_diffuseTex[rgbindex_Redlowright + 0] * toFloat,
+					fragmentBuffer[index].dev_diffuseTex[rgbindex_Redlowright + 1] * toFloat,
+					fragmentBuffer[index].dev_diffuseTex[rgbindex_Redlowright + 2] * toFloat);
 
-		col = finalinterp;
-		//col = glm::vec3(fragmentBuffer[index].dev_diffuseTex[rgbindex_Redlowleft + 0] * toFloat,
-		//				fragmentBuffer[index].dev_diffuseTex[rgbindex_Redlowleft + 1] * toFloat,
-		//				fragmentBuffer[index].dev_diffuseTex[rgbindex_Redlowleft + 2] * toFloat);
+				const glm::vec3 col_highleft(fragmentBuffer[index].dev_diffuseTex[rgbindex_Redhighleft + 0] * toFloat,
+					fragmentBuffer[index].dev_diffuseTex[rgbindex_Redhighleft + 1] * toFloat,
+					fragmentBuffer[index].dev_diffuseTex[rgbindex_Redhighleft + 2] * toFloat);
 
-	} else {
-		col = fragmentBuffer[index].color;
-	}
+				const glm::vec3 col_highright(fragmentBuffer[index].dev_diffuseTex[rgbindex_Redhighright + 0] * toFloat,
+					fragmentBuffer[index].dev_diffuseTex[rgbindex_Redhighright + 1] * toFloat,
+					fragmentBuffer[index].dev_diffuseTex[rgbindex_Redhighright + 2] * toFloat);
 
-	const int mode = 1;
+				const glm::vec3 lowXinterp = col_lowright*uX + col_lowleft*(1.f - uX);
+				const glm::vec3 highXinterp = col_highright*uX + col_highleft*(1.f - uX);
+				const glm::vec3 finalinterp = highXinterp*uY + lowXinterp*(1.f - uY);
 
-	//diffuse shading
-	if (0 == mode) {
-		const glm::vec3 lightDir = glm::normalize(glm::vec3(1, 1, 1));
-		framebuffer[index] = glm::dot(lightDir, fragmentBuffer[index].eyeNor) * col;
+				col = finalinterp;
+				//col = glm::vec3(fragmentBuffer[index].dev_diffuseTex[rgbindex_Redlowleft + 0] * toFloat,
+				//				fragmentBuffer[index].dev_diffuseTex[rgbindex_Redlowleft + 1] * toFloat,
+				//				fragmentBuffer[index].dev_diffuseTex[rgbindex_Redlowleft + 2] * toFloat);
+
+			} else {
+				col = fragmentBuffer[index].color;
+			}
+
+			const int mode = 1;
+
+			//diffuse shading
+			if (0 == mode) {
+				const glm::vec3 lightDir = glm::normalize(glm::vec3(1, 1, 1));
+				//framebuffer[index] = glm::dot(lightDir, fragmentBuffer[index].eyeNor) * col;
+				finalcolor += glm::dot(lightDir, fragmentBuffer[index].eyeNor) * col;
 
 
-		//blinn-phong shading model from wikipedia
-	} else {
-		const glm::vec3 lightPos(10.0, 10.0, 10.0);
-		const glm::vec3 ambientColor(0.0, 0.0, 0.0);
-		//const glm::vec3 diffuseColor(0.5, 0.0, 0.0);
-		const glm::vec3 diffuseColor(col);
-		const glm::vec3 specColor(1.0, 1.0, 1.0);
-		const float shininess = 16.0;
-		const float screenGamma = 2.2; // Assume the monitor is calibrated to the sRGB color space
+				//blinn-phong shading model from wikipedia
+			} else {
+				const glm::vec3 lightPos(10.0, 10.0, 10.0);
+				const glm::vec3 ambientColor(0.0, 0.0, 0.0);
+				//const glm::vec3 diffuseColor(0.5, 0.0, 0.0);
+				const glm::vec3 diffuseColor(col);
+				const glm::vec3 specColor(1.0, 1.0, 1.0);
+				const float shininess = 16.0;
+				const float screenGamma = 2.2; // Assume the monitor is calibrated to the sRGB color space
 
-		const glm::vec3 normal = fragmentBuffer[index].eyeNor;
-		const glm::vec3 fragPos = fragmentBuffer[index].eyePos;
-		const glm::vec3 lightDir = normalize(lightPos - fragPos);
+				const glm::vec3 normal = fragmentBuffer[index].eyeNor;
+				const glm::vec3 fragPos = fragmentBuffer[index].eyePos;
+				const glm::vec3 lightDir = normalize(lightPos - fragPos);
 
-		const float lambertian = glm::max(glm::dot(lightDir, normal), 0.f);
-		float specular = 0.0;
+				const float lambertian = glm::max(glm::dot(lightDir, normal), 0.f);
+				float specular = 0.0;
 
-		if (lambertian > 0.0) {
-			glm::vec3 viewDir = glm::normalize(-fragPos);
+				if (lambertian > 0.0) {
+					glm::vec3 viewDir = glm::normalize(-fragPos);
 
-			// this is blinn phong
-			const glm::vec3 halfDir = glm::normalize(lightDir + viewDir);
-			float specAngle = glm::max(glm::dot(halfDir, normal), 0.f);
-			specular = glm::pow(specAngle, shininess);
+					// this is blinn phong
+					const glm::vec3 halfDir = glm::normalize(lightDir + viewDir);
+					float specAngle = glm::max(glm::dot(halfDir, normal), 0.f);
+					specular = glm::pow(specAngle, shininess);
 
-			// this is phong (for comparison)
-			if (mode == 2) {
-				glm::vec3 reflectDir = glm::reflect(-lightDir, normal);
-				specAngle = glm::max(glm::dot(reflectDir, viewDir), 0.f);//same as HalfDotNor
-				// note that the exponent is different here
-				specular = glm::pow(specAngle, shininess / 4.f);
+					// this is phong (for comparison)
+					if (mode == 2) {
+						glm::vec3 reflectDir = glm::reflect(-lightDir, normal);
+						specAngle = glm::max(glm::dot(reflectDir, viewDir), 0.f);//same as HalfDotNor
+						// note that the exponent is different here
+						specular = glm::pow(specAngle, shininess / 4.f);
+					}
+				}
+				const glm::vec3 colorLinear = ambientColor + lambertian * diffuseColor + specular * specColor;
+				// apply gamma correction (assume ambientColor, diffuseColor and specColor
+				// have been linearized, i.e. have no gamma correction in them)
+				const glm::vec3 colorGammaCorrected = glm::pow(colorLinear, glm::vec3(1.f / screenGamma));
+				// use the gamma corrected color in the fragment
+				//framebuffer[index] = colorGammaCorrected;
+				finalcolor += colorGammaCorrected;
 			}
 		}
-		const glm::vec3 colorLinear = ambientColor + lambertian * diffuseColor + specular * specColor;
-		// apply gamma correction (assume ambientColor, diffuseColor and specColor
-		// have been linearized, i.e. have no gamma correction in them)
-		const glm::vec3 colorGammaCorrected = glm::pow(colorLinear, glm::vec3(1.f / screenGamma));
-		// use the gamma corrected color in the fragment
-		framebuffer[index] = colorGammaCorrected;
 	}
+
+	framebuffer[index] = finalcolor * (1.f/total);
 }
 
 /**
@@ -257,20 +289,30 @@ void render(const int w, const int h,
 void rasterizeInit(int w, int h) {
     width = w;
     height = h;
-	cudaFree(dev_fragmentBuffer);
-	cudaMalloc(&dev_fragmentBuffer, width * height * sizeof(Fragment));
-	cudaMemset(dev_fragmentBuffer, 0, width * height * sizeof(Fragment));
+
+	////AA
+	//int AASCALING = 1;
+	//if (SSAA > 1) {
+	//	AASCALING = SSAA;
+	//} else if (MSAA > 1) {
+	//	AASCALING = MSAA;
+	//}
+
     cudaFree(dev_framebuffer);
     cudaMalloc(&dev_framebuffer,   width * height * sizeof(glm::vec3));
     cudaMemset(dev_framebuffer, 0, width * height * sizeof(glm::vec3));
-    
+
+	cudaFree(dev_fragmentBuffer);
+	cudaMalloc(&dev_fragmentBuffer,   AASCALING * width * height * sizeof(Fragment));
+	cudaMemset(dev_fragmentBuffer, 0, AASCALING * width * height * sizeof(Fragment));
+
 	cudaFree(dev_depth);
-	cudaMalloc(&dev_depth, width * height * sizeof(int));
+	cudaMalloc(&dev_depth, AASCALING * width * height * sizeof(int));
 
     cudaFree(dev_mutices);
-    cudaMalloc(&dev_mutices,   width * height * sizeof(int));
-    cudaMemset(dev_mutices, 0, width * height * sizeof(int));
-
+	cudaMalloc(&dev_mutices,   AASCALING * width * height * sizeof(int));
+	cudaMemset(dev_mutices, 0, AASCALING * width * height * sizeof(int));
+    
 	checkCUDAError("rasterizeInit");
 }
 
@@ -737,37 +779,44 @@ void _vertexTransformAndAssembly(
 
 	// vertex id
 	int vid = (blockIdx.x * blockDim.x) + threadIdx.x;
-	if (vid < numVertices) {
+	if (vid >= numVertices) { return; }
 
-		// TODO: Apply vertex transformation here
-		// Multiply the MVP matrix for each vertex position, this will transform everything into clipping space
-		// Then divide the pos by its w element to transform into NDC space
-		// Finally transform x and y to viewport space
-		glm::vec4 viewportPos = MVP * glm::vec4(primitive.dev_position[vid], 1.f);
-		viewportPos *= (1.f / viewportPos.w);
-		//viewportPos.x = 0.5f * width  * (1.f + viewportPos.x);
-		//viewportPos.y = 0.5f * height * (1.f - viewportPos.y);
-		viewportPos.x = 0.5f * width  * (1.f - viewportPos.x);//i guess upper right is 0,0 for this code
-		viewportPos.y = 0.5f * height * (1.f - viewportPos.y);
-		//ndc lowleft is -1,-1 and upright is 1,1. 
-		//ndc x coords line up with how pixel coords are laid out( increase from left to right)
-		//but ndc y coords are reversed, they increase from bottom to top but pixels coords increase from top to bottom, 
-		//thats why we need to essential flip the ndc y coords by multiplying by -1
-		//this puts ndc y vals of 1 at pixel y vals of 0(top of screen) and ndc y vals of -1 at pixel vals of height(bottom of screen)
+	// TODO: Apply vertex transformation here
+	// Multiply the MVP matrix for each vertex position, this will transform everything into clipping space
+	// Then divide the pos by its w element to transform into NDC space
+	// Finally transform x and y to viewport space
+	glm::vec4 viewportPos = MVP * glm::vec4(primitive.dev_position[vid], 1.f);
+	viewportPos *= (1.f / viewportPos.w);
+	//viewportPos.x = 0.5f * width  * (1.f + viewportPos.x);
+	//viewportPos.y = 0.5f * height * (1.f - viewportPos.y);
 
-		// TODO: Apply vertex assembly here
-		// Assemble all attribute arraies into the primitive array
-		if (0 != primitive.diffuseTexHeight && 0 != primitive.diffuseTexWidth && primitive.dev_diffuseTex != NULL) {
-			primitive.dev_verticesOut[vid].texcoord0      = primitive.dev_texcoord0[vid];
-			primitive.dev_verticesOut[vid].dev_diffuseTex = primitive.dev_diffuseTex;
-			primitive.dev_verticesOut[vid].texWidth		  = primitive.diffuseTexWidth;
-			primitive.dev_verticesOut[vid].texHeight	  = primitive.diffuseTexHeight;
-		}
-		primitive.dev_verticesOut[vid].eyeNor = glm::normalize(MV_normal * primitive.dev_normal[vid]);//cam space
-		primitive.dev_verticesOut[vid].eyePos = glm::vec3(MV * glm::vec4(primitive.dev_position[vid], 1.f));//cam space
-		primitive.dev_verticesOut[vid].pos = viewportPos;//pixel space 
-		primitive.dev_verticesOut[vid].col = glm::vec3(1, 0, 0);
+	//int AASCALE = 1;
+	//if (SSAA > 1) {
+	//	AASCALE = SSAA;
+	//} else if (MSAA > 1) {
+	//	AASCALE = MSAA;
+	//}
+
+	viewportPos.x = 0.5f * width  * (1.f - viewportPos.x);//i guess upper right is 0,0 for this code
+	viewportPos.y = 0.5f * height * (1.f - viewportPos.y);
+	//ndc lowleft is -1,-1 and upright is 1,1. 
+	//ndc x coords line up with how pixel coords are laid out( increase from left to right)
+	//but ndc y coords are reversed, they increase from bottom to top but pixels coords increase from top to bottom, 
+	//thats why we need to essential flip the ndc y coords by multiplying by -1
+	//this puts ndc y vals of 1 at pixel y vals of 0(top of screen) and ndc y vals of -1 at pixel vals of height(bottom of screen)
+
+	// TODO: Apply vertex assembly here
+	// Assemble all attribute arraies into the primitive array
+	if (0 != primitive.diffuseTexHeight && 0 != primitive.diffuseTexWidth && primitive.dev_diffuseTex != NULL) {
+		primitive.dev_verticesOut[vid].texcoord0 = primitive.dev_texcoord0[vid];
+		primitive.dev_verticesOut[vid].dev_diffuseTex = primitive.dev_diffuseTex;
+		primitive.dev_verticesOut[vid].texWidth = primitive.diffuseTexWidth;
+		primitive.dev_verticesOut[vid].texHeight = primitive.diffuseTexHeight;
 	}
+	primitive.dev_verticesOut[vid].eyeNor = glm::normalize(MV_normal * primitive.dev_normal[vid]);//cam space
+	primitive.dev_verticesOut[vid].eyePos = glm::vec3(MV * glm::vec4(primitive.dev_position[vid], 1.f));//cam space
+	primitive.dev_verticesOut[vid].pos = viewportPos;//pixel space 
+	primitive.dev_verticesOut[vid].col = glm::vec3(1, 0, 0);
 }
 
 
@@ -845,7 +894,9 @@ void _baryRasterize(const Primitive* const primitives,
 			const int pixelidx = x + y*width;
 			int* mutex = &mutices[pixelidx];
 			bool isSet = false;
-			const float depthBufScale = -100000.f;//helps with sorting, depth buffer holds int values, push tiny values up to large ints
+			const float depthBufScale = -100000.f;//helps with sorting, depth buffer holds int values, val between near and far plane will be less than 1(if NDC z)
+			//slide the decimal point over so we can compare ints with ints and differentiate between fractional parts of the z values
+
 			do {
 				if (isSet = atomicCAS(mutex, 0, 1) == 0) {
 					if (depth[pixelidx] > depthBufScale*perspcorrectz) {
@@ -893,7 +944,7 @@ void rasterize(uchar4 *pbo, const glm::mat4 & MVP, const glm::mat4 & MV, const g
 				dim3 numBlocksForVertices((p->numVertices + numThreadsPerBlock.x - 1) / numThreadsPerBlock.x);
 				dim3 numBlocksForIndices((p->numIndices + numThreadsPerBlock.x - 1) / numThreadsPerBlock.x);
 
-				_vertexTransformAndAssembly << < numBlocksForVertices, numThreadsPerBlock >> >(p->numVertices, *p, MVP, MV, MV_normal, width, height);
+				_vertexTransformAndAssembly << < numBlocksForVertices, numThreadsPerBlock >> >(p->numVertices, *p, MVP, MV, MV_normal, sqrtAASCALING*width, sqrtAASCALING*height);
 				checkCUDAError("Vertex Processing");
 				cudaDeviceSynchronize();
 				_primitiveAssembly << < numBlocksForIndices, numThreadsPerBlock >> >
@@ -910,18 +961,28 @@ void rasterize(uchar4 *pbo, const glm::mat4 & MVP, const glm::mat4 & MV, const g
 		checkCUDAError("Vertex Processing and Primitive Assembly");
 	}
 	
-	cudaMemset(dev_fragmentBuffer, 0, width * height * sizeof(Fragment));
-	initDepth << <blockCount2d, blockSize2d >> >(width, height, dev_depth);
+	//int AASCALING = 1;
+	//if (SSAA > 1) {
+	//	AASCALING = SSAA;
+	//} else if (MSAA > 1) {
+	//	AASCALING = MSAA;
+	//}
+	//const int sqrtAASCALING = glm::sqrt(AASCALING);
+	cudaMemset(dev_fragmentBuffer, 0, AASCALING * width * height * sizeof(Fragment));
+    dim3 blockCount2dAA((sqrtAASCALING*width  - 1) / blockSize2d.x + 1,
+		(sqrtAASCALING*height - 1) / blockSize2d.y + 1);
+	initDepth << <blockCount2dAA, blockSize2d >> >(sqrtAASCALING*width, sqrtAASCALING*height, dev_depth);
 	checkCUDAError("initDepth");
 	
 	// TODO: rasterize
 	const int numThreadsPerBlock = 128;
 	const int numBlocksForPrimitives = (totalNumPrimitives + numThreadsPerBlock - 1) / numThreadsPerBlock;
-	_baryRasterize<<<numBlocksForPrimitives, numThreadsPerBlock>>>(dev_primitives, totalNumPrimitives, dev_fragmentBuffer, dev_depth, dev_mutices, width, height);
+	_baryRasterize<<<numBlocksForPrimitives, numThreadsPerBlock>>>(dev_primitives, totalNumPrimitives, 
+		dev_fragmentBuffer, dev_depth, dev_mutices, sqrtAASCALING*width, sqrtAASCALING*height);
 	checkCUDAError("_baryRasterize");
 
     // Copy depthbuffer colors into framebuffer
-	render<<<blockCount2d, blockSize2d>>>(width, height, dev_fragmentBuffer, dev_framebuffer);
+	render<<<blockCount2d, blockSize2d>>>(width, height, sqrtAASCALING, dev_fragmentBuffer, dev_framebuffer);
 	checkCUDAError("fragment shader");
     // Copy framebuffer into OpenGL buffer for OpenGL previewing
     sendImageToPBO<<<blockCount2d, blockSize2d>>>(pbo, width, height, dev_framebuffer);
