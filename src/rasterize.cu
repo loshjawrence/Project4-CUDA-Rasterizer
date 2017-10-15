@@ -17,21 +17,25 @@
 #include "rasterize.h"
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtc/matrix_transform.hpp>
-
-//static const int SSAA = 4;//4 or 16, subsample patter is grid so can only really do numbers with integer sqrt's, i.e. form a grid
-//static const int MSAA = 1;//4 or 16
+#include <chrono>
 #define SSAA 1;//4 or 16, subsample patter is grid so can only really do numbers with integer sqrt's, i.e. form a grid
-#define MSAA 1;//4 or 16
+#define MSAA 1;//same as above
+#define TIMER 1
 
 #if 1 < SSAA 
-const int AASCALING = SSAA;
+static const int AASCALING = SSAA;
 #elif 1 < MSAA
-const int AASCALING = MSAA;
+static const int AASCALING = MSAA;
 #else
-const int AASCALING = 1;
+static const int AASCALING = 1;
 #endif
 
 static const int sqrtAASCALING = glm::sqrt(AASCALING);
+
+template<typename T>
+void printElapsedTime(T time, std::string note = "") {
+	std::cout << "   elapsed time: " << time << "ms    " << note << std::endl;
+}
 
 namespace {
 
@@ -180,6 +184,7 @@ void render(const int wimage, const int himage, const int sqrtAASCALING,
 		for (int xAA = xAAstart; xAA < xAAend; ++xAA) {
 			const int index = xAA + yAA*wAA;
 			if (fragmentBuffer[index].dev_diffuseTex != NULL) {
+			//if (false) {
 				//compute color from texture
 				const int width = fragmentBuffer[index].texWidth;
 				const int height = fragmentBuffer[index].texHeight;
@@ -218,10 +223,10 @@ void render(const int wimage, const int himage, const int sqrtAASCALING,
 				const glm::vec3 highXinterp = col_highright*uX + col_highleft*(1.f - uX);
 				const glm::vec3 finalinterp = highXinterp*uY + lowXinterp*(1.f - uY);
 
-				col = finalinterp;
-				//col = glm::vec3(fragmentBuffer[index].dev_diffuseTex[rgbindex_Redlowleft + 0] * toFloat,
-				//				fragmentBuffer[index].dev_diffuseTex[rgbindex_Redlowleft + 1] * toFloat,
-				//				fragmentBuffer[index].dev_diffuseTex[rgbindex_Redlowleft + 2] * toFloat);
+				//col = finalinterp;
+				col = glm::vec3(fragmentBuffer[index].dev_diffuseTex[rgbindex_Redlowleft + 0] * toFloat,
+								fragmentBuffer[index].dev_diffuseTex[rgbindex_Redlowleft + 1] * toFloat,
+								fragmentBuffer[index].dev_diffuseTex[rgbindex_Redlowleft + 2] * toFloat);
 
 			} else {
 				col = fragmentBuffer[index].color;
@@ -289,14 +294,6 @@ void render(const int wimage, const int himage, const int sqrtAASCALING,
 void rasterizeInit(int w, int h) {
     width = w;
     height = h;
-
-	////AA
-	//int AASCALING = 1;
-	//if (SSAA > 1) {
-	//	AASCALING = SSAA;
-	//} else if (MSAA > 1) {
-	//	AASCALING = MSAA;
-	//}
 
     cudaFree(dev_framebuffer);
     cudaMalloc(&dev_framebuffer,   width * height * sizeof(glm::vec3));
@@ -855,11 +852,12 @@ void _baryRasterize(const Primitive* const primitives,
 									 glm::vec3(primitives[primID].v[1].pos),
 									 glm::vec3(primitives[primID].v[2].pos) };
 
+	const glm::vec3 primNor = glm::cross(screentri[1] - screentri[0], screentri[2] - screentri[0]);
+	if (primNor.z < 0) { return; }
+
 	const glm::vec3 eyetri[3] =    { glm::vec3(primitives[primID].v[0].eyePos),
 									 glm::vec3(primitives[primID].v[1].eyePos),
 									 glm::vec3(primitives[primID].v[2].eyePos) };
-	const glm::vec3 primNor = glm::cross(screentri[1] - screentri[0], screentri[2] - screentri[0]);
-	if (primNor.z < 0) { return; }
 
 	const AABB bounds = getAABBForTriangle(screentri, width, height);
 	for (int x = bounds.min.x; x < bounds.max.x; ++x) {
@@ -937,6 +935,10 @@ void rasterize(uchar4 *pbo, const glm::mat4 & MVP, const glm::mat4 & MV, const g
 		auto it = mesh2PrimitivesMap.begin();
 		auto itEnd = mesh2PrimitivesMap.end();
 
+#if 1 == TIMER
+	using time_point_t = std::chrono::high_resolution_clock::time_point;
+	time_point_t time_start_cpu = std::chrono::high_resolution_clock::now();
+#endif
 		for (; it != itEnd; ++it) {
 			auto p = (it->second).begin();	// each primitive
 			auto pEnd = (it->second).end();
@@ -957,33 +959,57 @@ void rasterize(uchar4 *pbo, const glm::mat4 & MVP, const glm::mat4 & MV, const g
 				curPrimitiveBeginId += p->numPrimitives;
 			}
 		}
+#if 1 == TIMER
+	cudaDeviceSynchronize();
+	time_point_t time_end_cpu = std::chrono::high_resolution_clock::now();
+	std::chrono::duration<double, std::milli> duro = time_end_cpu - time_start_cpu;
+	float prev_elapsed_time_cpu_milliseconds = static_cast<decltype(prev_elapsed_time_cpu_milliseconds)>(duro.count());
+	printElapsedTime(prev_elapsed_time_cpu_milliseconds, "vertex assembly, vertex transform, prim assembly(std::chrono Measured)");
+#endif
 
 		checkCUDAError("Vertex Processing and Primitive Assembly");
 	}
 	
-	//int AASCALING = 1;
-	//if (SSAA > 1) {
-	//	AASCALING = SSAA;
-	//} else if (MSAA > 1) {
-	//	AASCALING = MSAA;
-	//}
-	//const int sqrtAASCALING = glm::sqrt(AASCALING);
 	cudaMemset(dev_fragmentBuffer, 0, AASCALING * width * height * sizeof(Fragment));
     dim3 blockCount2dAA((sqrtAASCALING*width  - 1) / blockSize2d.x + 1,
 		(sqrtAASCALING*height - 1) / blockSize2d.y + 1);
 	initDepth << <blockCount2dAA, blockSize2d >> >(sqrtAASCALING*width, sqrtAASCALING*height, dev_depth);
 	checkCUDAError("initDepth");
 	
+#if 1 == TIMER
+	using time_point_t = std::chrono::high_resolution_clock::time_point;
+	time_point_t time_start_cpu = std::chrono::high_resolution_clock::now();
+#endif
 	// TODO: rasterize
 	const int numThreadsPerBlock = 128;
 	const int numBlocksForPrimitives = (totalNumPrimitives + numThreadsPerBlock - 1) / numThreadsPerBlock;
 	_baryRasterize<<<numBlocksForPrimitives, numThreadsPerBlock>>>(dev_primitives, totalNumPrimitives, 
 		dev_fragmentBuffer, dev_depth, dev_mutices, sqrtAASCALING*width, sqrtAASCALING*height);
 	checkCUDAError("_baryRasterize");
+#if 1 == TIMER
+	cudaDeviceSynchronize();
+	time_point_t time_end_cpu = std::chrono::high_resolution_clock::now();
+	std::chrono::duration<double, std::milli> duro = time_end_cpu - time_start_cpu;
+	float prev_elapsed_time_cpu_milliseconds = static_cast<decltype(prev_elapsed_time_cpu_milliseconds)>(duro.count());
+	printElapsedTime(prev_elapsed_time_cpu_milliseconds, "Rasterize(std::chrono Measured)");
+#endif
 
+#if 1 == TIMER
+	time_start_cpu = std::chrono::high_resolution_clock::now();
+#endif
     // Copy depthbuffer colors into framebuffer
 	render<<<blockCount2d, blockSize2d>>>(width, height, sqrtAASCALING, dev_fragmentBuffer, dev_framebuffer);
 	checkCUDAError("fragment shader");
+#if 1 == TIMER
+	cudaDeviceSynchronize();
+	time_end_cpu = std::chrono::high_resolution_clock::now();
+	duro = time_end_cpu - time_start_cpu;
+	prev_elapsed_time_cpu_milliseconds = static_cast<decltype(prev_elapsed_time_cpu_milliseconds)>(duro.count());
+	printElapsedTime(prev_elapsed_time_cpu_milliseconds, "Render(std::chrono Measured)");
+#endif
+
+
+
     // Copy framebuffer into OpenGL buffer for OpenGL previewing
     sendImageToPBO<<<blockCount2d, blockSize2d>>>(pbo, width, height, dev_framebuffer);
     checkCUDAError("copy render result to pbo");
