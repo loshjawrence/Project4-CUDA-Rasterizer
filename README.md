@@ -24,7 +24,7 @@ https://mynameismjp.wordpress.com/2012/10/24/msaa-overview/
 
 <br />
 <br />
-    There was not much savings between software SSAA and MSAA, both needed additional depth buffer slots for the subsamles, additional fragment slots for the subsamples and blending of teh subsamples.
+    There was not much savings between software SSAA and MSAA, both needed additional depth buffer slots for the subsamles, additional fragment slots for the subsamples and blending of teh subsamples. I did not really see a difference in implementation details from reading the article, or at least pass one fragment to the fragment shader(render function) to magically blend between the edge of the duck and the black background).
 <br />
 <br />
 

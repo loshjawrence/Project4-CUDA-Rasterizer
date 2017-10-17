@@ -202,31 +202,31 @@ void render(const int wimage, const int himage, const int sqrtAASCALING,
 				const int rgbindex_Redhighright = 3 * (texY_high*width + texX_high);
 				const float toFloat = 1.f / 255.f;
 
-				//bilinear interp of the four texels
-				const glm::vec3 col_lowleft(fragmentBuffer[index].dev_diffuseTex[rgbindex_Redlowleft + 0] * toFloat,
-					fragmentBuffer[index].dev_diffuseTex[rgbindex_Redlowleft + 1] * toFloat,
-					fragmentBuffer[index].dev_diffuseTex[rgbindex_Redlowleft + 2] * toFloat);
+				//bilinear interpolation
+				const glm::vec3 col_lowleft(fragmentBuffer[index].dev_diffuseTex[rgbindex_Redlowleft + 0] ,
+											fragmentBuffer[index].dev_diffuseTex[rgbindex_Redlowleft + 1] ,
+											fragmentBuffer[index].dev_diffuseTex[rgbindex_Redlowleft + 2] );
 
-				const glm::vec3 col_lowright(fragmentBuffer[index].dev_diffuseTex[rgbindex_Redlowright + 0] * toFloat,
-					fragmentBuffer[index].dev_diffuseTex[rgbindex_Redlowright + 1] * toFloat,
-					fragmentBuffer[index].dev_diffuseTex[rgbindex_Redlowright + 2] * toFloat);
+				const glm::vec3 col_lowright(fragmentBuffer[index].dev_diffuseTex[rgbindex_Redlowright + 0] ,
+											 fragmentBuffer[index].dev_diffuseTex[rgbindex_Redlowright + 1] ,
+											 fragmentBuffer[index].dev_diffuseTex[rgbindex_Redlowright + 2] );
 
-				const glm::vec3 col_highleft(fragmentBuffer[index].dev_diffuseTex[rgbindex_Redhighleft + 0] * toFloat,
-					fragmentBuffer[index].dev_diffuseTex[rgbindex_Redhighleft + 1] * toFloat,
-					fragmentBuffer[index].dev_diffuseTex[rgbindex_Redhighleft + 2] * toFloat);
+				const glm::vec3 col_highleft(fragmentBuffer[index].dev_diffuseTex[rgbindex_Redhighleft + 0] ,
+											 fragmentBuffer[index].dev_diffuseTex[rgbindex_Redhighleft + 1] ,
+											 fragmentBuffer[index].dev_diffuseTex[rgbindex_Redhighleft + 2] );
 
-				const glm::vec3 col_highright(fragmentBuffer[index].dev_diffuseTex[rgbindex_Redhighright + 0] * toFloat,
-					fragmentBuffer[index].dev_diffuseTex[rgbindex_Redhighright + 1] * toFloat,
-					fragmentBuffer[index].dev_diffuseTex[rgbindex_Redhighright + 2] * toFloat);
+				const glm::vec3 col_highright(fragmentBuffer[index].dev_diffuseTex[rgbindex_Redhighright + 0],
+											 fragmentBuffer[index].dev_diffuseTex[rgbindex_Redhighright + 1] ,
+											 fragmentBuffer[index].dev_diffuseTex[rgbindex_Redhighright + 2] );
 
 				const glm::vec3 lowXinterp = col_lowright*uX + col_lowleft*(1.f - uX);
 				const glm::vec3 highXinterp = col_highright*uX + col_highleft*(1.f - uX);
 				const glm::vec3 finalinterp = highXinterp*uY + lowXinterp*(1.f - uY);
 
-				//col = finalinterp;
-				col = glm::vec3(fragmentBuffer[index].dev_diffuseTex[rgbindex_Redlowleft + 0] * toFloat,
-								fragmentBuffer[index].dev_diffuseTex[rgbindex_Redlowleft + 1] * toFloat,
-								fragmentBuffer[index].dev_diffuseTex[rgbindex_Redlowleft + 2] * toFloat);
+				col = finalinterp * toFloat;
+				//col = glm::vec3(fragmentBuffer[index].dev_diffuseTex[rgbindex_Redlowleft + 0] * toFloat,
+				//				fragmentBuffer[index].dev_diffuseTex[rgbindex_Redlowleft + 1] * toFloat,
+				//				fragmentBuffer[index].dev_diffuseTex[rgbindex_Redlowleft + 2] * toFloat);
 
 			} else {
 				col = fragmentBuffer[index].color;
