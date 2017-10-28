@@ -36,7 +36,7 @@ https://mynameismjp.wordpress.com/2012/10/24/msaa-overview/
 **Duck Blinn-Phong, gamma correction**<br />
 ![](renders/duckblinnphong.png)
 
-**Duck MSAA comparison**<br />
+**Duck SSAA comparison**<br />
 ![](renders/msaacompare.png)
 
 **Checker no tex filtering**<br />
