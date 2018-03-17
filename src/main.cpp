@@ -29,7 +29,11 @@ int main(int argc, char **argv) {
 	tinygltf::Scene scene;
 	tinygltf::TinyGLTFLoader loader;
 	std::string err;
+<<<<<<< HEAD
 	const std::string input_filename("C:/Users/loshj/Box Sync/UPennCGGT/cis565/Project4-CUDA-Rasterizer/gltfs/duck/duck.gltf");
+=======
+	const std::string input_filename("C:/Users/Josh/Desktop/Project4-CUDA-Rasterizer/gltfs/duck/duck.gltf");
+>>>>>>> 3c4f88e3e53ee628f3eb099d9745a80d05eed22f
 	std::string ext = getFilePathExtension(input_filename);
 
 	bool ret = false;
