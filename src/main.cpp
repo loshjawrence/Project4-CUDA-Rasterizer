@@ -19,17 +19,17 @@
 //-------------------------------
 
 int main(int argc, char **argv) {
-    if (argc != 2) {
-        cout << "Usage: [gltf file]. Press Enter to exit" << endl;
-		getchar();
-        return 0;
-    }
+  //  if (argc != 2) {
+  //      cout << "Usage: [gltf file]. Press Enter to exit" << endl;
+		//getchar();
+  //      return 0;
+  //  }
+	//std::string input_filename(argv[1]);
 
 	tinygltf::Scene scene;
 	tinygltf::TinyGLTFLoader loader;
 	std::string err;
-	//std::string input_filename(argv[1]);
-	const std::string input_filename("C:/Users/Josh/Box Sync/UPennCGGT/cis565/Project4-CUDA-Rasterizer/gltfs/duck/duck.gltf");
+	const std::string input_filename("C:/Users/loshj/Box Sync/UPennCGGT/cis565/Project4-CUDA-Rasterizer/gltfs/duck/duck.gltf");
 	std::string ext = getFilePathExtension(input_filename);
 
 	bool ret = false;
